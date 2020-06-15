@@ -1,42 +1,52 @@
 const fs = require("fs");
 const os = require("os");
 
+let inputPath;
+let outputPath;
+let $id;
+let title;
+
 let inputSchema;
 let outputSchema;
-let isObjectId;
 
-function read() {
-	const inputPath = process.argv[2];
+async function read(pInputPath, pOutputPath, pId, pTitle) {
+	inputPath = pInputPath || process.argv[2];
+	outputPath = pOutputPath || process.argv[3];
+
+	$id = pId || inputPath.split('/').pop().split('.')[0];
+	title = pTitle || $id;
 
 	if (!inputPath) throw(new Error("No input path specified."));
 
-	fs.readFile(inputPath, "utf8", (error, data) => {
-		if (error) throw error;
+	return new Promise((resolve, reject) => {
+		fs.readFile(inputPath, "utf8", (error, data) => {
+			if (error) reject(error);
 
-		inputSchema = JSON.parse(data);
-		convert();
+			inputSchema = JSON.parse(data);
+			convert().then(resolve).catch(reject);
+		});
 	});
 }
 
 function convert() {
 	outputSchema = {
-	  // $id: "https://www.adaptlearning.org",
+	  $id: $id,
 	  $schema: "http://json-schema.org/draft-07/schema#",
+	  title: title,
 	  type: "object",
 	  required: getRequiredFields(inputSchema),
 	  properties: getProperties(inputSchema)
 	};
-
-	write();
+	return write();
 }
 
 function write() {
-	const outputPath = process.argv[3] || "schema.json";
-
-	fs.writeFile(outputPath, JSON.stringify(outputSchema, null, 2) + os.EOL, error => {
-		if (error) throw error;
-
-		console.log("Written schema.");
+	return new Promise((resolve, reject) => {
+		fs.writeFile(outputPath || `${outputSchema.title}.schema.json`, JSON.stringify(outputSchema, null, 2) + os.EOL, error => {
+			if (error) return reject(error);
+			console.log(`Written schema to ${outputPath}`);
+			resolve(outputPath);
+		});
 	});
 }
 
@@ -77,7 +87,7 @@ function getProperties(schema) {
 
 function getSchema(key, value) {
 	return {
-		type: getType(value),
+		type: value.type,
 		title: getTitle(value, key),
 		description: value.help,
 		default: getDefault(value),
@@ -85,19 +95,10 @@ function getSchema(key, value) {
 		required: getRequiredFields(value),
 		items: getItems(value),
 		properties: getProperties(value),
-		isObjectId: isObjectId,
 		_adapt: getAdaptOptions(value),
 		_backboneForms: getBackboneFormsOptions(value),
 		_unrecognisedFields: getUnrecognisedFields(value)
 	};
-}
-
-function getType(schema) {
-	if (schema.type !== "objectid") return schema.type;
-
-	isObjectId = true;
-
-	return "string";
 }
 
 function getTitle(schema, key) {
@@ -111,22 +112,16 @@ function getTitle(schema, key) {
 }
 
 function getDefault(schema) {
-	const hasDefault = schema.default !== undefined;
-
-	if (hasDefault) return schema.default;
-
-	const isRequired = schema.validators && schema.validators.includes("required");
-
-	if (!hasDefault && isRequired) return;
+	if (schema.default !== undefined) return schema.default;
 
 	switch (schema.type) {
 		case "string":
-		case "objectid":
 			return "";
 		case "number":
 			return 0;
 		case "object":
-			return {};
+			if (!schema.properties) return {};
+			break;
 		case "array":
 			if (!schema.items) return [];
 			break;
@@ -185,18 +180,9 @@ function getAdaptOptions(schema) {
 }
 
 function getBackboneFormsOptions(schema) {
-	const getEditor = () => {
+	const getType = () => {
 		const type = schema.type;
-
-		const recognisedTypes = [
-			"string",
-			"number",
-			"object",
-			"array",
-			"boolean",
-			"objectid"
-		];
-
+		const recognisedTypes = [ "string", "number", "object", "array", "boolean" ];
 		const editor = options.type || schema.inputType;
 
 		if (!recognisedTypes.includes(type)) console.log(`Unrecognised type => ${type}`);
@@ -225,7 +211,7 @@ function getBackboneFormsOptions(schema) {
 	let options = typeof schema.inputType === "object" ? schema.inputType : {};
 
 	Object.assign(options, {
-		type: getEditor(),
+		type: getType(),
 		titleHTML: schema.titleHTML,
 		validators: getValidators(),
 		editorClass: schema.editorClass,
